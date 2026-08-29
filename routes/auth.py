@@ -1,5 +1,8 @@
 from flask import request, jsonify, Blueprint
 import re
+from models.user import User
+from extensions import db
+from werkzeug.security import generate_password_hash, check_password_hash
 
 auth_bp = Blueprint("auth", __name__)
 
@@ -23,10 +26,11 @@ def signup():
     mobile_pattern = r"^[6-9]\d{9}$"
     username_pattern = r"(?=.{3,30}$)[A-Za-z0-9_]+(?: [A-Za-z0-9_]+)*"
 
-    if not re.fullmatch(username_pattern, username):
-        return jsonify({"error": "Invalid username"}), 400
     if not username or not email or not mobile or not password or not confirm_password:
         return jsonify({"error": "All fields required"}), 400
+
+    if not re.fullmatch(username_pattern, username):
+        return jsonify({"error": "Invalid username"}), 400
     if password != confirm_password:
         return jsonify({"error": "Password not matched"}), 400
     if not re.match(password_pattern, password):
@@ -35,6 +39,28 @@ def signup():
         return jsonify({"error": "Invalid Email Address "}), 400
     if not re.fullmatch(mobile_pattern, mobile):
         return jsonify({"error": "Invalid Mobile Number"}), 400
+
+    if User.query.filter_by(username=username).first():
+        return jsonify({"error": "Username already exists", "field": "username"}), 400
+
+    if User.query.filter_by(email=email).first():
+        return jsonify({"error": "Email already exists", "field": "email"}), 400
+
+    if User.query.filter_by(mobile=mobile).first():
+        return (
+            jsonify({"error": "Mobile number already exists", "field": "mobile"}),
+            400,
+        )
+
+    password_hash = generate_password_hash(password)
+
+    new_user = User(
+        username=username, email=email, mobile=mobile, password_hash=password_hash
+    )
+
+    db.session.add(new_user)
+    db.session.commit()
+    print("Data Received")
 
     return (
         jsonify(
