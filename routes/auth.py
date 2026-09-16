@@ -1,11 +1,12 @@
-from flask import request, jsonify, Blueprint
+from flask import request, jsonify, Blueprint, current_app, make_response
 import re
 from models.user import User
 from extensions import db, mail
 from werkzeug.security import generate_password_hash, check_password_hash
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from models.otp import Otp
 from routes.otp_sender import generate_and_send_otp
+import jwt
 
 auth_bp = Blueprint("auth", __name__)
 
@@ -152,3 +153,173 @@ def verify_otp():
     db.session.commit()
 
     return jsonify({"message": "OTP verified successfully. Account activated!"}), 200
+
+
+@auth_bp.route("/resend-otp", methods=["POST"])
+def resend_otp():
+    responce = request.get_json(silent=True)
+    if not responce:
+        return jsonify({"error": "Invalid JSON data"}), 400
+
+    email = responce.get("email")
+
+    if not email:
+        return jsonify({"error": "Email is required"}), 400
+
+    user = User.query.filter_by(email=email).first()
+
+    if not user:
+        return jsonify({"error": "User not Found"}), 400
+
+    if user.status == "active":
+        return jsonify({"error": "User already Existed"})
+
+    generate_and_send_otp(user=user, email=email)
+
+    db.session.commit()
+
+    return (
+        jsonify(
+            {
+                "message": "OTP sent to your email!",
+                "email": email,
+            }
+        ),
+        200,
+    )
+
+
+@auth_bp.route("/login", methods=["POST"])
+def login():
+    Login_data = request.get_json(silent=True)
+
+    if not Login_data:
+        return jsonify({"error": "Invalid Login Data"}), 400
+
+    email = Login_data.get("email")
+    password = Login_data.get("password")
+
+    if not email or not password:
+        return jsonify({"error": "Email and Password required"}), 400
+
+    password_pattern = (
+        r"^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$"
+    )
+    email_pattern = r"^[a-zA-Z0-9._%+-]+" r"@[a-zA-Z0-9.-]+" r"\.[a-zA-Z]{2,}$"
+    mobile_pattern = r"^[6-9]\d{9}$"
+
+    if not (re.fullmatch(email_pattern, email) or re.fullmatch(mobile_pattern, email)):
+        return (
+            jsonify({"error": "Invalid Email or Mobile Number ", "field": "email"}),
+            400,
+        )
+    if not re.fullmatch(password_pattern, password):
+        return jsonify({"error": "Invalid Password"}), 400
+
+    user = User.query.filter_by(email=email).first()
+    if not user:
+        return jsonify({"error": "User Not Found"}), 404
+
+    if user.status == "active":
+
+        password_correct = check_password_hash(user.password_hash, password)
+
+        if not password_correct:
+            return jsonify({"error": "Invalid Password !! Try again"}), 401
+
+        generate_and_send_otp(user=user, email=email)
+        db.session.commit()
+        return jsonify({"message": "OTP sent to your email!", "email": email}), 200
+
+    if user.status == "pending":
+        return jsonify({"error": "Account Not Activated Yet"}), 403
+
+
+@auth_bp.route("/verify-login-otp", methods=["POST"])
+def verify_login_otp():
+
+    response = request.get_json(silent=True)
+
+    if not response:
+        return jsonify({"error": "Invalid Json"}), 400
+
+    email = response.get("email")
+    otp = response.get("otp")
+
+    if not email or not otp:
+        return jsonify({"error": "Email and Otp Required"}), 400
+
+    user = User.query.filter_by(email=email).first()
+
+    if not user:
+        return jsonify({"error": "User Not Found"}), 404
+
+    if user.status == "pending":
+        return jsonify({"error": "Account Not Activated !! Please verify again"}), 400
+
+    otp_record = Otp.query.filter_by(user_id=user.id).first()
+
+    if not otp_record:
+        return jsonify({"error": "OTP Not Found !! Please request a new OTP"}), 404
+
+    if not str(otp).isdigit() or len(str(otp)) != 6:
+        return jsonify({"error": "Enter a valid 6 digit OTP"}), 400
+
+    if datetime.utcnow() > otp_record.expires_at:
+
+        db.session.delete(otp_record)
+        db.session.commit()
+
+        return jsonify({"error": "OTP Expired !! Please request a new OTP"}), 400
+
+    if not check_password_hash(otp_record.otp_hash, str(otp)):
+        return jsonify({"error": "Invalid OTP !! Try again"}), 400
+
+    access_token = jwt.encode(
+        {
+            "sub": str(user.id),
+            "email": user.email,
+            "type": "access",
+            "iat": datetime.now(timezone.utc),
+            "exp": datetime.now(timezone.utc) + timedelta(minutes=15),
+        },
+        current_app.config["JWT_SECRET_KEY"],
+        algorithm="HS256",
+    )
+
+    db.session.delete(otp_record)
+    db.session.commit()
+
+    response = make_response(
+        jsonify(
+            {
+                "message": "Login Successful",
+                "user": {
+                    "id": user.id,
+                    "username": user.username,
+                    "email": user.email,
+                },
+            }
+        ),
+        200,
+    )
+
+    response.set_cookie(
+        "access_token",
+        access_token,
+        samesite="Lax",
+        httponly=True,
+        secure=True,
+        max_age=900,
+    )
+    return response
+
+
+@auth_bp.route("/logout", methods=["POST"])
+def logout():
+
+    response = make_response(jsonify({"message": "Logout successful"}), 200)
+
+    response.delete_cookie("access_token", samesite="Lax")
+
+    return response

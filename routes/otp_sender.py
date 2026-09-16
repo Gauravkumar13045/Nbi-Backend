@@ -10,31 +10,21 @@ from models.otp import Otp
 
 def generate_and_send_otp(user, email):
 
-    # 1. Delete old OTP if it exists
-    old_otp = Otp.query.filter_by(user_id=user.id).first()
+    Otp.query.filter_by(user_id=user.id).delete(synchronize_session=False)
+    db.session.flush()
 
-    if old_otp:
-        db.session.delete(old_otp)
-        db.session.flush()
-
-    # 2. Generate a new 6-digit OTP
     otp = secrets.randbelow(900000) + 100000
 
-    # 3. Hash the OTP before storing it
     otp_hash = generate_password_hash(str(otp))
 
-    # 4. Set OTP expiry to 5 minutes
     expires_at = datetime.utcnow() + timedelta(minutes=5)
 
-    # 5. Create OTP database record
     otp_record = Otp(user_id=user.id, otp_hash=otp_hash, expires_at=expires_at)
 
     db.session.add(otp_record)
 
-    # 6. Create email
     msg = Message(subject="NBI Bank - Verify Your Email Address", recipients=[email])
 
-    # 7. Email HTML
     msg.html = f"""
     <!DOCTYPE html>
     <html>
@@ -71,7 +61,7 @@ def generate_and_send_otp(user, email):
                         <td>
 
                             <img
-                                src="src="https://res.cloudinary.com/dug0cvjfs/image/upload/v1788261391/cc75a133-3c03-4a93-9fe1-af14d9203462.png""
+                                src="https://res.cloudinary.com/dug0cvjfs/image/upload/v1788261391/cc75a133-3c03-4a93-9fe1-af14d9203462.png"
                                 height="70"
                                 alt="NBI Logo"
                             />
@@ -206,8 +196,6 @@ def generate_and_send_otp(user, email):
     </html>
     """
 
-    # 8. Send email
     mail.send(msg)
 
-    # Return OTP record
     return otp_record
