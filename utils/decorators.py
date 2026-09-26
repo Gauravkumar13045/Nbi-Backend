@@ -1,28 +1,21 @@
 from functools import wraps
+
 import jwt
+
 from flask import request, jsonify, current_app
 from models.user import User
 
 
 def token_required(original_function):
-
     @wraps(original_function)
     def wrapper(*args, **kwargs):
 
         token = request.cookies.get("access_token")
 
         if not token:
-            return jsonify({"error": "Authorization token is missing"}), 401
-
-        parts = token.split()
-
-        if len(parts) != 2 or parts[0].lower() != "bearer":
-            return jsonify({"error": "Invalid Authorization header format"}), 401
-
-        token = parts[1]
+            return jsonify({"error": "Authentication cookie is missing"}), 401
 
         try:
-
             decoded_token = jwt.decode(
                 token, current_app.config["JWT_SECRET_KEY"], algorithms=["HS256"]
             )

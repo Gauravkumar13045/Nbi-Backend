@@ -309,7 +309,7 @@ def verify_login_otp():
         access_token,
         samesite="Lax",
         httponly=True,
-        secure=True,
+        secure=False,
         max_age=900,
     )
     return response
