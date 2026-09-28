@@ -7,6 +7,7 @@ from extensions import db, mail
 from models import user
 from models import otp
 from routes.protected import protected_bp
+from routes.account import account_bp
 
 load_dotenv()
 
@@ -52,6 +53,7 @@ mail.init_app(app)
 
 app.register_blueprint(auth_bp)
 app.register_blueprint(protected_bp, url_prefix="/api")
+app.register_blueprint(account_bp, url_prefix="/api")
 
 with app.app_context():
     db.create_all()
