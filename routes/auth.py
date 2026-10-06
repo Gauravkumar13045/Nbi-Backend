@@ -6,6 +6,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime, timedelta, timezone
 from models.otp import Otp
 from routes.otp_sender import generate_and_send_otp
+from routes.account import create_account
 import jwt
 
 auth_bp = Blueprint("auth", __name__)
@@ -150,6 +151,14 @@ def verify_otp():
 
     db.session.delete(otp_record)
 
+    create_account(
+        user_id=user.id,
+        account_type="Savings",
+        branch_code="DUM001",
+        ifsc_code="NBIN0000001",
+        opening_balance=10000,
+    )
+
     db.session.commit()
 
     return jsonify({"message": "OTP verified successfully. Account activated!"}), 200
@@ -281,7 +290,7 @@ def verify_login_otp():
             "email": user.email,
             "type": "access",
             "iat": datetime.now(timezone.utc),
-            "exp": datetime.now(timezone.utc) + timedelta(minutes=15),
+            "exp": datetime.now(timezone.utc) + timedelta(hours=2),
         },
         current_app.config["JWT_SECRET_KEY"],
         algorithm="HS256",
@@ -310,9 +319,37 @@ def verify_login_otp():
         samesite="Lax",
         httponly=True,
         secure=False,
-        max_age=900,
+        max_age=7200,
     )
     return response
+
+
+@auth_bp.route("/resend-login-otp", methods=["POST"])
+def resend_login_otp():
+
+    response = request.get_json(silent=True)
+
+    if not response:
+        return jsonify({"error": "Invalid JSON data"}), 400
+
+    email = response.get("email")
+
+    if not email:
+        return jsonify({"error": "Email is required"}), 400
+
+    user = User.query.filter_by(email=email).first()
+
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+
+    if user.status != "active":
+        return jsonify({"error": "User is not active"}), 403
+
+    generate_and_send_otp(user=user, email=email)
+
+    db.session.commit()
+
+    return jsonify({"message": "Login OTP sent successfully!", "email": email}), 200
 
 
 @auth_bp.route("/logout", methods=["POST"])
